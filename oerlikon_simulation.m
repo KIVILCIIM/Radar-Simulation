@@ -14,10 +14,8 @@ TargetRCS = 1.0; % Required target radar cross section
 PropagationSpeed = physconst('LightSpeed'); % Propagation speed is defined as the light speed
 Pulse_BandWidth = PropagationSpeed/(2*RangeResolution); % Pulse bandwidth 
 PulseWidth = 1/Pulse_BandWidth; % Pulse width
-%PRF = PropagationSpeed/(2*Max_Range); % Pulse repetition frequency, it is given in the paper
-PRF = 6400;
-%fs = 2*Pulse_BandWidth; % Sampling rate, Nyquist–Shannon sampling theorem
-fs = 6400 * 313; % fs/PRF oranının tam sayı olması gerekmektedir
+PRF = 30e3;
+fs=300 * PRF;
 waveform = phased.RectangularWaveform(...
     'PulseWidth',1/Pulse_BandWidth,...
     'PRF',PRF,...
@@ -27,7 +25,7 @@ waveform = phased.RectangularWaveform(...
 Noise_BandWidth = Pulse_BandWidth;
 
 receiver = phased.ReceiverPreamp(...
-    'Gain',40,...  %Gain yüksek seçildi
+    'Gain',20,...
     'NoiseFigure',0,...
     'SampleRate',fs,...
     'EnableInputPort',true);
@@ -36,23 +34,13 @@ receiver.SeedSource = 'Property'; % For repeatable simulation
 receiver.Seed = 2007;
 
 %% Transmitter Characterics
-num_pulse_int = 43; %survaillance radar için belirtilen sayı
+num_pulse_int = 43;
 SNR_Min = albersheim(Pd, Pfa, num_pulse_int);
-fprintf('43 pulse için gerekli minimum SNR: %.2f dB\n', SNR_Min);
-%SNR_Min=3;
-Tx_Gain = 30;
-
-fc = 10e9; % 9 GHz — typical for X-band surveillance radar
+Tx_Gain = 10;
+fc = 10e9;
 lambda = PropagationSpeed/fc;
 Peak_Power = radareqpow(lambda, Max_Range, SNR_Min, PulseWidth, 'RCS', TargetRCS, 'Gain', Tx_Gain);
 transmitter = phased.Transmitter('Gain',Tx_Gain, 'PeakPower',Peak_Power, 'InUseOutputPort',true);
-
-figure;
-rocsnr([-5 0 3 5 10 15], 'SignalType', 'NonfluctuatingCoherent', 'NumPulses', num_pulse_int); %ekstra değerler eklendi rocsnr içine
-
-num_pulse_int = 43;
-Tx_Gain = 30;
-
 
 %% Antenna Properties
 
@@ -131,34 +119,4 @@ figure,
 imagesc(dop_grid,rng_grid,mag2db(abs(resp)));
 xlabel('Speed (m/s)');
 ylabel('Range (m)');
-title('Range-Doppler Map Oerlikon Coherent');
-
-%% --- Clutter Parametreleri ---
-weibullShape = 2;      % Weibull shape (k)
-weibullScale = 1;      % Weibull scale (lambda)
-rho = 0.9;             % AR(1) korelasyon katsayısı
-
-%% --- Döngü İçinde Clutter Oluştur ve Uygula ---
-for m = 1:num_pulse_int
-    % Sensor ve hedef konumlarını güncelle
-    [sensorpos,sensorvel] = SensorMotion(1/PRF);
-    [tgtpos,tgtvel] = tgtmotion(1/PRF);
-    [tgtrng,tgtang] = rangeangle(tgtpos,sensorpos);
-
-    % Radar darbesi oluştur
-    pulse = waveform();
-    [txsig,txstatus] = transmitter(pulse);
-    txsig = Radiator(txsig, tgtang);
-    txsig = channel(txsig, sensorpos, tgtpos, sensorvel, tgtvel);
-    tgtsig = target(txsig);
-    rxsig = Collector(tgtsig, tgtang);
-
-    % --- Clutter üret (Weibull + AR + kompleks) ---
-    N = numel(fast_time_grid);
-    clutter = wblrnd(weibullScale, weibullShape, [N,1]);     % Weibull
-    clutter = filter(1, [1 -rho], clutter);                  % AR(1)
-    clutter = clutter .* exp(1j * 2 * pi * rand(N,1));       % Kompleks hale getir
-
-    % --- Hedef sinyaline clutter ekle ve alıcıya gönder ---
-    rxpulses(:,m) = receiver(rxsig + clutter, ~(txstatus > 0));
-end
+title('Range-Doppler Map of OerlikonSkyguard');
