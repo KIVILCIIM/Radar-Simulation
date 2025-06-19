@@ -14,7 +14,10 @@ TargetRCS = 1.0; % Required target radar cross section
 PropagationSpeed = physconst('LightSpeed'); % Propagation speed is defined as the light speed
 Pulse_BandWidth = PropagationSpeed/(2*RangeResolution); % Pulse bandwidth 
 PulseWidth = 1/Pulse_BandWidth; % Pulse width
+%PRF = PropagationSpeed/(2*Max_Range); % Pulse repetition frequency, it is given in the paper
+%PRF = 1e4;
 PRF = 30e3;
+%fs = 2*Pulse_BandWidth; % Sampling rate, Nyquist–Shannon sampling theorem
 fs=300 * PRF;
 waveform = phased.RectangularWaveform(...
     'PulseWidth',1/Pulse_BandWidth,...
@@ -34,7 +37,7 @@ receiver.SeedSource = 'Property'; % For repeatable simulation
 receiver.Seed = 2007;
 
 %% Transmitter Characterics
-num_pulse_int = 43;
+num_pulse_int = 300;
 SNR_Min = albersheim(Pd, Pfa, num_pulse_int);
 Tx_Gain = 10;
 fc = 10e9;
@@ -120,3 +123,34 @@ imagesc(dop_grid,rng_grid,mag2db(abs(resp)));
 xlabel('Speed (m/s)');
 ylabel('Range (m)');
 title('Range-Doppler Map of OerlikonSkyguard');
+response = phased.RangeDopplerResponse( ...
+    'DopplerFFTLengthSource','Property', ...
+    'DopplerFFTLength',RangeDopplerEx_MF_NFFTDOP, ...
+    'SampleRate',RangeDopplerEx_MF_Fs, ...
+    'DopplerWindow','Hann', ...  % <---- windowing to suppress sidelobes
+    'DopplerOutput','Speed', ...
+    'OperatingFrequency',RangeDopplerEx_MF_Fc);
+%% --- Döngü İçinde Clutter Oluştur ve Uygula ---
+for m = 1:num_pulse_int
+    % Sensor ve hedef konumlarını güncelle
+    [sensorpos,sensorvel] = SensorMotion(1/PRF);
+    [tgtpos,tgtvel] = tgtmotion(1/PRF);
+    [tgtrng,tgtang] = rangeangle(tgtpos,sensorpos);
+
+    % Radar darbesi oluştur
+    pulse = waveform();
+    [txsig,txstatus] = transmitter(pulse);
+    txsig = Radiator(txsig, tgtang);
+    txsig = channel(txsig, sensorpos, tgtpos, sensorvel, tgtvel);
+    tgtsig = target(txsig);
+    rxsig = Collector(tgtsig, tgtang);
+
+    % --- Clutter üret (Weibull + AR + kompleks) ---
+    N = numel(fast_time_grid);
+    clutter = wblrnd(weibullScale, weibullShape, [N,1]);     % Weibull
+    clutter = filter(1, [1 -rho], clutter);                  % AR(1)
+    clutter = clutter .* exp(1j * 2 * pi * rand(N,1));       % Kompleks hale getir
+
+    % --- Hedef sinyaline clutter ekle ve alıcıya gönder ---
+    rxpulses(:,m) = receiver(rxsig + clutter, ~(txstatus > 0));
+end
